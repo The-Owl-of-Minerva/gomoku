@@ -198,59 +198,223 @@ function undo() {
 
 // --- 一个“能玩就行”的简易 AI：
 // 优先：能赢就赢；否则先堵对方必胜点；否则在已有棋子附近随机取一个更“靠中心”的点
+// ====================== Stronger AI (Alpha-Beta + Pattern Eval) ======================
+// 可调参数：越大越强，但越慢。建议 3 起步
+const AI_DEPTH = 3;
+
+// 限制分支数：越大越强，但越慢（浏览器性能关键）
+const ROOT_BRANCH = 20;
+const INNER_BRANCH = 14;
+
+// 评分表（可调）
+const SCORE = {
+  FIVE: 10000000,
+  OPEN_FOUR: 250000,
+  FOUR: 60000,
+  OPEN_THREE: 12000,
+  THREE: 3500,
+  OPEN_TWO: 700,
+  TWO: 220,
+};
+
 function aiPickMove(aiColor) {
   const opp = aiColor === BLACK ? WHITE : BLACK;
 
-  const candidates = genCandidates(2);
-  if (!candidates.length) return { r: 9, c: 9 };
+  const candidates = genCandidatesNeighborhood(2);
+  if (candidates.length === 0) return { r: 9, c: 9 };
 
-  // 1) 自己能立刻成五
+  // 0) 必胜先手
   for (const p of candidates) {
     board[p.r][p.c] = aiColor;
-    const ok = checkWin(p.r, p.c, aiColor);
+    const win = checkWin(p.r, p.c, aiColor);
     board[p.r][p.c] = EMPTY;
-    if (ok) return p;
+    if (win) return p;
   }
-  // 2) 堵对手立刻成五
+  // 1) 必防对手一手成五
   for (const p of candidates) {
     board[p.r][p.c] = opp;
-    const ok = checkWin(p.r, p.c, opp);
+    const win = checkWin(p.r, p.c, opp);
     board[p.r][p.c] = EMPTY;
-    if (ok) return p;
+    if (win) return p;
   }
 
-  // 3) 选更靠中心的（带一点随机）
-  const center = (SIZE - 1) / 2;
-  candidates.sort((a,b) => {
-    const da = Math.hypot(a.r-center, a.c-center);
-    const db = Math.hypot(b.r-center, b.c-center);
-    return da - db;
-  });
+  // 排序：让剪枝更有效
+  const ordered = candidates
+    .map(p => ({ p, s: quickPointHeuristic(p.r, p.c, aiColor) }))
+    .sort((a, b) => b.s - a.s)
+    .slice(0, ROOT_BRANCH)
+    .map(x => x.p);
 
-  const topK = Math.min(8, candidates.length);
-  return candidates[Math.floor(Math.random() * topK)];
+  let best = ordered[0];
+  let bestScore = -Infinity;
+
+  for (const p of ordered) {
+    board[p.r][p.c] = aiColor;
+    const score = -alphaBeta(AI_DEPTH - 1, -Infinity, Infinity, opp, aiColor);
+    board[p.r][p.c] = EMPTY;
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = p;
+    }
+  }
+
+  return best;
 }
 
-function genCandidates(radius) {
-  // 只考虑“已有棋子附近 radius 格”的空位，加速
-  const hasAny = moves.length > 0;
+// Negamax alpha-beta：side 为当前下子方，aiColor 为评估视角
+function alphaBeta(depth, alpha, beta, side, aiColor) {
+  const opp = side === BLACK ? WHITE : BLACK;
+
+  if (depth <= 0) return evaluateBoard(aiColor);
+
+  const candidates = genCandidatesNeighborhood(2);
+  if (candidates.length === 0) return evaluateBoard(aiColor);
+
+  const ordered = candidates
+    .map(p => ({ p, s: quickPointHeuristic(p.r, p.c, side) }))
+    .sort((a, b) => b.s - a.s)
+    .slice(0, INNER_BRANCH)
+    .map(x => x.p);
+
+  for (const p of ordered) {
+    board[p.r][p.c] = side;
+
+    // 直接胜利：立即返回极值
+    if (checkWin(p.r, p.c, side)) {
+      board[p.r][p.c] = EMPTY;
+      return side === aiColor ? SCORE.FIVE : -SCORE.FIVE;
+    }
+
+    const val = -alphaBeta(depth - 1, -beta, -alpha, opp, aiColor);
+    board[p.r][p.c] = EMPTY;
+
+    if (val > alpha) alpha = val;
+    if (alpha >= beta) break; // 剪枝
+  }
+
+  return alpha;
+}
+
+// 候选点：已有棋子周围 radius 范围内的空点
+function genCandidatesNeighborhood(radius) {
+  if (moves.length === 0) return [{ r: 9, c: 9 }];
+
   const set = new Set();
   const out = [];
 
-  if (!hasAny) return [{ r: 9, c: 9 }];
-
   for (const m of moves) {
-    for (let dr = -radius; dr <= radius; dr++) for (let dc = -radius; dc <= radius; dc++) {
-      const r = m.r + dr, c = m.c + dc;
-      if (r<0||r>=SIZE||c<0||c>=SIZE) continue;
-      if (board[r][c] !== EMPTY) continue;
-      const key = r + "," + c;
-      if (set.has(key)) continue;
-      set.add(key);
-      out.push({ r, c });
+    for (let dr = -radius; dr <= radius; dr++) {
+      for (let dc = -radius; dc <= radius; dc++) {
+        const r = m.r + dr, c = m.c + dc;
+        if (r < 0 || r >= SIZE || c < 0 || c >= SIZE) continue;
+        if (board[r][c] !== EMPTY) continue;
+        const key = r + "," + c;
+        if (set.has(key)) continue;
+        set.add(key);
+        out.push({ r, c });
+      }
     }
   }
   return out;
+}
+
+// 快速点评估：临时落子看威胁
+function quickPointHeuristic(r, c, side) {
+  if (board[r][c] !== EMPTY) return -Infinity;
+  board[r][c] = side;
+  const s = evaluatePoint(r, c, side);
+  board[r][c] = EMPTY;
+  return s;
+}
+
+// 全局评估：aiColor 视角（ai越大越好）
+// 只评候选点（加速）
+function evaluateBoard(aiColor) {
+  const opp = aiColor === BLACK ? WHITE : BLACK;
+
+  let aiScore = 0;
+  let oppScore = 0;
+
+  const cand = genCandidatesNeighborhood(2);
+  for (const p of cand) {
+    aiScore += potentialAt(p.r, p.c, aiColor);
+    oppScore += potentialAt(p.r, p.c, opp);
+  }
+
+  // 防守略优先
+  return aiScore - oppScore * 1.07;
+}
+
+function potentialAt(r, c, color) {
+  if (board[r][c] !== EMPTY) return 0;
+  board[r][c] = color;
+  const s = evaluatePoint(r, c, color);
+  board[r][c] = EMPTY;
+  return s;
+}
+
+function evaluatePoint(r, c, color) {
+  const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
+  let total = 0;
+  for (const [dr, dc] of dirs) {
+    const line = getLine(r, c, dr, dc, color);
+    total += scoreLine(line);
+  }
+  return total;
+}
+
+// 以 (r,c) 为中心取 9 格，映射：我方=1 空=0 对方/边界=2
+function getLine(r, c, dr, dc, color) {
+  const opp = color === BLACK ? WHITE : BLACK;
+  let s = "";
+  for (let k = -4; k <= 4; k++) {
+    const rr = r + k * dr, cc = c + k * dc;
+    if (rr < 0 || rr >= SIZE || cc < 0 || cc >= SIZE) s += "2";
+    else if (board[rr][cc] === EMPTY) s += "0";
+    else if (board[rr][cc] === color) s += "1";
+    else if (board[rr][cc] === opp) s += "2";
+  }
+  return s;
+}
+
+// 模式评分（简化但有效）
+function scoreLine(line) {
+  if (line.includes("11111")) return SCORE.FIVE;
+
+  // 活四
+  if (line.includes("011110")) return SCORE.OPEN_FOUR;
+
+  // 冲四 / 眠四
+  if (
+    line.includes("211110") || line.includes("011112") ||
+    line.includes("10111")  || line.includes("11101")  || line.includes("11011")
+  ) return SCORE.FOUR;
+
+  // 活三
+  if (
+    line.includes("01110") || line.includes("010110") || line.includes("011010")
+  ) return SCORE.OPEN_THREE;
+
+  // 眠三
+  if (
+    line.includes("21110") || line.includes("01112") ||
+    line.includes("01011") || line.includes("11010") ||
+    line.includes("10110") || line.includes("01101")
+  ) return SCORE.THREE;
+
+  // 活二
+  if (
+    line.includes("001100") || line.includes("0010100") || line.includes("010100")
+  ) return SCORE.OPEN_TWO;
+
+  // 眠二
+  if (
+    line.includes("21100") || line.includes("00112") ||
+    line.includes("01010") || line.includes("01100")
+  ) return SCORE.TWO;
+
+  return 0;
 }
 
 canvas.addEventListener("click", (e) => {

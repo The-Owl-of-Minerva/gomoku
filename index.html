@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>五子棋 19×19</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>五子棋 · 19×19</h1>
+
+    <div class="row">
+      <label>模式：</label>
+      <select id="mode">
+        <option value="local">本地双人</option>
+        <option value="ai">人机对战（你执黑）</option>
+        <option value="online" disabled>在线对战（需要后端）</option>
+      </select>
+
+      <span id="turnBadge" class="badge">当前：黑棋</span>
+      <span id="msg" class="msg"></span>
+    </div>
+
+    <div class="controls">
+      <button id="btnRestart">重新开始</button>
+      <button id="btnUndo">悔棋</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="boardShell">
+      <canvas id="board" width="760" height="760"></canvas>
+    </div>
+    <p class="hint">点击棋盘落子。五子连珠获胜（横/竖/斜）。</p>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

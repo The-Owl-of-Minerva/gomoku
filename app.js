@@ -1,3 +1,4 @@
+// ====================== Board / UI Config ======================
 const SIZE = 19;
 const PADDING = 30;
 const CANVAS_SIZE = 760;
@@ -25,6 +26,7 @@ images.white.src = "assets/white.svg";
 
 let board, current, gameOver, moves;
 
+// ====================== Game Init / UI ======================
 function init() {
   board = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
   current = BLACK;
@@ -41,6 +43,7 @@ function updateTurnUI() {
   turnBadge.textContent = `当前：${current === BLACK ? "黑棋" : "白棋"}`;
 }
 
+// ====================== Coord Helpers ======================
 function cellToXY(r, c) {
   return { x: PADDING + c * GRID, y: PADDING + r * GRID };
 }
@@ -57,8 +60,10 @@ function xyToCell(x, y) {
   return { r, c };
 }
 
+// ====================== Render ======================
 function draw() {
   ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
   if (images.boardBg.complete) ctx.drawImage(images.boardBg, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
   else { ctx.fillStyle = "#d7b57a"; ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE); }
 
@@ -99,6 +104,7 @@ function drawPiece(r, c, color) {
   const { x, y } = cellToXY(r, c);
   const img = color === BLACK ? images.black : images.white;
   const size = GRID * 0.92, half = size / 2;
+
   if (img.complete) ctx.drawImage(img, x - half, y - half, size, size);
   else {
     ctx.beginPath();
@@ -115,11 +121,11 @@ function drawLastMoveMarker(m) {
   ctx.beginPath(); ctx.arc(x, y, GRID * 0.18, 0, Math.PI * 2); ctx.stroke();
 }
 
+// ====================== Core Rules ======================
 function place(r, c) {
   if (gameOver) return;
   if (board[r][c] !== EMPTY) return;
 
-  // online 模式这里只做提示（静态站点没后端）
   if (modeSel.value === "online") {
     msg.textContent = "在线对战需要后端/实时服务（GitHub Pages 无法单独实现）。";
     return;
@@ -147,7 +153,7 @@ function place(r, c) {
   current = current === BLACK ? WHITE : BLACK;
   updateTurnUI();
 
-  // 人机：你执黑，AI执白
+  // Human vs AI: you play black, AI plays white
   if (modeSel.value === "ai" && current === WHITE) {
     setTimeout(() => {
       const mv = aiPickMove(WHITE);
@@ -159,21 +165,23 @@ function place(r, c) {
 function checkWin(r, c, color) {
   const dirs = [[0,1],[1,0],[1,1],[1,-1]];
   for (const [dr, dc] of dirs) {
-    const count = 1 + countDir(r,c,dr,dc,color) + countDir(r,c,-dr,-dc,color);
+    const count = 1 + countDir(r, c, dr, dc, color) + countDir(r, c, -dr, -dc, color);
     if (count >= 5) return true;
   }
   return false;
 }
-function countDir(r,c,dr,dc,color){
-  let rr=r+dr, cc=c+dc, cnt=0;
-  while(rr>=0&&rr<SIZE&&cc>=0&&cc<SIZE&&board[rr][cc]===color){ cnt++; rr+=dr; cc+=dc; }
+
+function countDir(r, c, dr, dc, color) {
+  let rr = r + dr, cc = c + dc, cnt = 0;
+  while (rr >= 0 && rr < SIZE && cc >= 0 && cc < SIZE && board[rr][cc] === color) {
+    cnt++; rr += dr; cc += dc;
+  }
   return cnt;
 }
 
 function undo() {
   if (moves.length === 0) return;
 
-  // 人机模式下：一次悔两步（你一步 + AI一步），避免轮次错乱
   const mode = modeSel.value;
   if (mode === "ai") {
     if (moves.length >= 1) {
@@ -186,7 +194,7 @@ function undo() {
   } else {
     const last = moves.pop();
     board[last.r][last.c] = EMPTY;
-    current = last.color; // 回到刚刚那方
+    current = last.color;
   }
 
   gameOver = false;
@@ -196,16 +204,13 @@ function undo() {
   draw();
 }
 
-// ====================== Stronger AI (Alpha-Beta + Pattern Eval) ======================
+// ====================== Stronger AI (Defense-First + Alpha-Beta) ======================
 
-// 可调参数：越大越强，但越慢。建议 3 起步
+// Tuning
 const AI_DEPTH = 3;
-
-// 限制分支数：越大越强，但越慢（浏览器性能关键）
 const ROOT_BRANCH = 20;
 const INNER_BRANCH = 14;
 
-// 评分表（可调）
 const SCORE = {
   FIVE: 10000000,
   OPEN_FOUR: 250000,
@@ -216,8 +221,10 @@ const SCORE = {
   TWO: 220,
 };
 
-// ✅ 关键开关：是否把“活三(01110)”当作必须堵的威胁
-const MUST_BLOCK_OPEN_THREE = true;
+// Defense knobs
+const DEFENSE_WEIGHT = 1.35;          // increase = more defensive
+const MUST_BLOCK_OPEN_THREE = true;   // treat open-three threats as must-block
+const MUST_BLOCK_STRAIGHT_THREE_RUN = true; // block ".XXX." (3-in-a-row with both ends empty)
 
 function aiPickMove(aiColor) {
   const opp = aiColor === BLACK ? WHITE : BLACK;
@@ -225,7 +232,7 @@ function aiPickMove(aiColor) {
   const candidates = genCandidatesNeighborhood(2);
   if (candidates.length === 0) return { r: 9, c: 9 };
 
-  // 0) 我方一手成五：直接下
+  // 0) Win now
   for (const p of candidates) {
     board[p.r][p.c] = aiColor;
     const win = checkWin(p.r, p.c, aiColor);
@@ -233,7 +240,7 @@ function aiPickMove(aiColor) {
     if (win) return p;
   }
 
-  // 1) 对手一手成五：必须堵
+  // 1) Block opponent immediate win
   for (const p of candidates) {
     board[p.r][p.c] = opp;
     const win = checkWin(p.r, p.c, opp);
@@ -241,15 +248,21 @@ function aiPickMove(aiColor) {
     if (win) return p;
   }
 
-  // 2) ✅ 必须防的威胁：活四/冲四/双活三/（可选：单活三）
+  // 2) Block existing straight 3-run ".XXX."
+  if (MUST_BLOCK_STRAIGHT_THREE_RUN) {
+    const blockRun = findBlockOpenThreeRuns(aiColor);
+    if (blockRun) return blockRun;
+  }
+
+  // 3) Must-block tactical threats
   const block = findUrgentBlock(aiColor);
   if (block) return block;
 
-  // 3) 我方优先制造强威胁：活四/冲四/双活三
+  // 4) Create strong threats (attack after defense)
   const attack = findUrgentAttack(aiColor);
   if (attack) return attack;
 
-  // 4) alpha-beta 搜索（在战术过滤之后做）
+  // 5) Alpha-beta search
   const ordered = candidates
     .map(p => ({ p, s: quickPointHeuristic(p.r, p.c, aiColor) }))
     .sort((a, b) => b.s - a.s)
@@ -273,7 +286,95 @@ function aiPickMove(aiColor) {
   return best;
 }
 
-// Negamax alpha-beta：side 为当前下子方，aiColor 为评估视角
+// ---------- Defense: find ".XXX." runs and block an end ----------
+function findBlockOpenThreeRuns(aiColor) {
+  const opp = aiColor === BLACK ? WHITE : BLACK;
+
+  const candSet = new Set(genCandidatesNeighborhood(3).map(p => p.r + "," + p.c));
+
+  const dirs = [
+    [0, 1],
+    [1, 0],
+    [1, 1],
+    [1, -1],
+  ];
+
+  let best = null;
+  let bestUrgency = -Infinity;
+
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      if (board[r][c] !== opp) continue;
+
+      for (const [dr, dc] of dirs) {
+        const r1 = r + dr, c1 = c + dc;
+        const r2 = r + 2 * dr, c2 = c + 2 * dc;
+        if (!inBoard(r2, c2)) continue;
+        if (board[r1]?.[c1] !== opp || board[r2]?.[c2] !== opp) continue;
+
+        const rl = r - dr, cl = c - dc;
+        const rr = r + 3 * dr, cr = c + 3 * dc;
+
+        const leftEmpty = inBoard(rl, cl) && board[rl][cl] === EMPTY;
+        const rightEmpty = inBoard(rr, cr) && board[rr][cr] === EMPTY;
+
+        if (!(leftEmpty && rightEmpty)) continue;
+
+        const leftKey = rl + "," + cl;
+        const rightKey = rr + "," + cr;
+
+        const leftOk = candSet.has(leftKey);
+        const rightOk = candSet.has(rightKey);
+        if (!leftOk && !rightOk) continue;
+
+        const pick = pickMoreUrgentEnd({ r: rl, c: cl }, { r: rr, c: cr }, opp);
+        if (pick.urgency > bestUrgency) {
+          bestUrgency = pick.urgency;
+          best = pick.p;
+        }
+      }
+    }
+  }
+
+  return best;
+}
+
+function pickMoreUrgentEnd(p1, p2, oppColor) {
+  let best = { p: p1, urgency: -Infinity };
+
+  for (const p of [p1, p2]) {
+    if (!inBoard(p.r, p.c) || board[p.r][p.c] !== EMPTY) continue;
+
+    board[p.r][p.c] = oppColor;
+    const t = threatLevelAt(p.r, p.c, oppColor);
+    const win = checkWin(p.r, p.c, oppColor);
+    board[p.r][p.c] = EMPTY;
+
+    let urgency = 0;
+    if (win) urgency += SCORE.FIVE;
+    urgency += t.openFour * SCORE.OPEN_FOUR;
+    urgency += t.four * SCORE.FOUR;
+    urgency += (t.doubleOpenThree ? 2 : 0) * SCORE.OPEN_THREE;
+    urgency += t.openThree * SCORE.OPEN_THREE * 0.6;
+    urgency += centerBias(p.r, p.c);
+
+    if (urgency > best.urgency) best = { p, urgency };
+  }
+
+  return best;
+}
+
+function centerBias(r, c) {
+  const mid = (SIZE - 1) / 2;
+  const dist = Math.abs(r - mid) + Math.abs(c - mid);
+  return 50 - dist;
+}
+
+function inBoard(r, c) {
+  return r >= 0 && r < SIZE && c >= 0 && c < SIZE;
+}
+
+// ---------- Alpha-beta ----------
 function alphaBeta(depth, alpha, beta, side, aiColor) {
   const opp = side === BLACK ? WHITE : BLACK;
 
@@ -291,7 +392,6 @@ function alphaBeta(depth, alpha, beta, side, aiColor) {
   for (const p of ordered) {
     board[p.r][p.c] = side;
 
-    // 直接胜利：立即返回极值
     if (checkWin(p.r, p.c, side)) {
       board[p.r][p.c] = EMPTY;
       return side === aiColor ? SCORE.FIVE : -SCORE.FIVE;
@@ -301,13 +401,13 @@ function alphaBeta(depth, alpha, beta, side, aiColor) {
     board[p.r][p.c] = EMPTY;
 
     if (val > alpha) alpha = val;
-    if (alpha >= beta) break; // 剪枝
+    if (alpha >= beta) break;
   }
 
   return alpha;
 }
 
-// 候选点：已有棋子周围 radius 范围内的空点
+// ---------- Candidate generation ----------
 function genCandidatesNeighborhood(radius) {
   if (moves.length === 0) return [{ r: 9, c: 9 }];
 
@@ -330,7 +430,7 @@ function genCandidatesNeighborhood(radius) {
   return out;
 }
 
-// 快速点评估：临时落子看威胁
+// ---------- Heuristics / Eval ----------
 function quickPointHeuristic(r, c, side) {
   if (board[r][c] !== EMPTY) return -Infinity;
   board[r][c] = side;
@@ -339,8 +439,6 @@ function quickPointHeuristic(r, c, side) {
   return s;
 }
 
-// 全局评估：aiColor 视角（ai越大越好）
-// 只评候选点（加速）
 function evaluateBoard(aiColor) {
   const opp = aiColor === BLACK ? WHITE : BLACK;
 
@@ -353,8 +451,25 @@ function evaluateBoard(aiColor) {
     oppScore += potentialAt(p.r, p.c, opp);
   }
 
-  // 防守略优先
-  return aiScore - oppScore * 1.07;
+  const extraOppThreat = estimateOppOpenThreePressure(opp);
+  return aiScore - oppScore * DEFENSE_WEIGHT - extraOppThreat;
+}
+
+function estimateOppOpenThreePressure(opp) {
+  const cand = genCandidatesNeighborhood(2);
+  let penalty = 0;
+
+  for (const p of cand) {
+    if (board[p.r][p.c] !== EMPTY) continue;
+    board[p.r][p.c] = opp;
+    const t = threatLevelAt(p.r, p.c, opp);
+    board[p.r][p.c] = EMPTY;
+
+    penalty += t.openThree * 2500;
+    if (t.doubleOpenThree) penalty += 8000;
+  }
+
+  return penalty;
 }
 
 function potentialAt(r, c, color) {
@@ -375,7 +490,7 @@ function evaluatePoint(r, c, color) {
   return total;
 }
 
-// 以 (r,c) 为中心取 9 格，映射：我方=1 空=0 对方/边界=2
+// map 9 cells around (r,c): self=1 empty=0 opp/border=2
 function getLine(r, c, dr, dc, color) {
   const opp = color === BLACK ? WHITE : BLACK;
   let s = "";
@@ -389,73 +504,51 @@ function getLine(r, c, dr, dc, color) {
   return s;
 }
 
-// 模式评分（简化但有效）
 function scoreLine(line) {
   if (line.includes("11111")) return SCORE.FIVE;
-
-  // 活四
   if (line.includes("011110")) return SCORE.OPEN_FOUR;
 
-  // 冲四 / 眠四
   if (
     line.includes("211110") || line.includes("011112") ||
     line.includes("10111")  || line.includes("11101")  || line.includes("11011")
   ) return SCORE.FOUR;
 
-  // 活三
-  if (
-    line.includes("01110") || line.includes("010110") || line.includes("011010")
-  ) return SCORE.OPEN_THREE;
+  if (line.includes("01110") || line.includes("010110") || line.includes("011010"))
+    return SCORE.OPEN_THREE;
 
-  // 眠三
   if (
     line.includes("21110") || line.includes("01112") ||
     line.includes("01011") || line.includes("11010") ||
     line.includes("10110") || line.includes("01101")
   ) return SCORE.THREE;
 
-  // 活二
-  if (
-    line.includes("001100") || line.includes("0010100") || line.includes("010100")
-  ) return SCORE.OPEN_TWO;
+  if (line.includes("001100") || line.includes("0010100") || line.includes("010100"))
+    return SCORE.OPEN_TWO;
 
-  // 眠二
-  if (
-    line.includes("21100") || line.includes("00112") ||
-    line.includes("01010") || line.includes("01100")
-  ) return SCORE.TWO;
+  if (line.includes("21100") || line.includes("00112") || line.includes("01010") || line.includes("01100"))
+    return SCORE.TWO;
 
   return 0;
 }
 
+// ---------- Tactical must-block / must-attack ----------
 function findUrgentBlock(aiColor) {
   const opp = aiColor === BLACK ? WHITE : BLACK;
   const candidates = genCandidatesNeighborhood(2);
 
   for (const p of candidates) {
-    // 模拟对手在 p 落子
     board[p.r][p.c] = opp;
 
-    // 1) 对手直接赢（成五）
     if (checkWin(p.r, p.c, opp)) {
       board[p.r][p.c] = EMPTY;
       return p;
     }
 
-    // 2) 对手落子后形成的威胁类型
     const t = threatLevelAt(p.r, p.c, opp);
-
     board[p.r][p.c] = EMPTY;
 
-    // 必须挡：活四/冲四/双活三
-    if (t.openFour > 0 || t.four > 0 || t.doubleOpenThree) {
-      return p;
-    }
-
-    // ✅ 新增：单活三也当作必须挡（解决“三个子连线必须堵”）
-    if (MUST_BLOCK_OPEN_THREE && t.openThree > 0) {
-      return p;
-    }
+    if (t.openFour > 0 || t.four > 0 || t.doubleOpenThree) return p;
+    if (MUST_BLOCK_OPEN_THREE && t.openThree > 0) return p;
   }
   return null;
 }
@@ -472,10 +565,8 @@ function findUrgentAttack(aiColor) {
     }
 
     const t = threatLevelAt(p.r, p.c, aiColor);
-
     board[p.r][p.c] = EMPTY;
 
-    // 优先级：活四 > 冲四 > 双活三
     if (t.openFour > 0) return p;
     if (t.four > 0) return p;
     if (t.doubleOpenThree) return p;
@@ -483,7 +574,6 @@ function findUrgentAttack(aiColor) {
   return null;
 }
 
-// 识别某一步落子后，在四个方向上产生的威胁计数
 function threatLevelAt(r, c, color) {
   const dirs = [[0,1],[1,0],[1,1],[1,-1]];
   let openFour = 0;
@@ -493,19 +583,15 @@ function threatLevelAt(r, c, color) {
   for (const [dr, dc] of dirs) {
     const line = getLine(r, c, dr, dc, color);
 
-    // 活四
     if (line.includes("011110")) openFour++;
 
-    // 冲四/眠四（简化覆盖）
     if (
       line.includes("211110") || line.includes("011112") ||
       line.includes("10111")  || line.includes("11101")  || line.includes("11011")
     ) four++;
 
-    // 活三（01110 / 010110 / 011010）
-    if (
-      line.includes("01110") || line.includes("010110") || line.includes("011010")
-    ) openThree++;
+    if (line.includes("01110") || line.includes("010110") || line.includes("011010"))
+      openThree++;
   }
 
   return {
@@ -516,6 +602,7 @@ function threatLevelAt(r, c, color) {
   };
 }
 
+// ====================== Events ======================
 canvas.addEventListener("click", (e) => {
   const rect = canvas.getBoundingClientRect();
   const x = (e.clientX - rect.left) * (canvas.width / rect.width);
@@ -529,7 +616,7 @@ btnRestart.addEventListener("click", init);
 btnUndo.addEventListener("click", undo);
 modeSel.addEventListener("change", () => init());
 
-// 资源加载后重绘，避免首次空白
+// redraw after assets loaded
 for (const k of Object.keys(images)) images[k].addEventListener("load", () => draw());
 
 init();

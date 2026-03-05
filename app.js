@@ -196,9 +196,8 @@ function undo() {
   draw();
 }
 
-// --- 一个“能玩就行”的简易 AI：
-// 优先：能赢就赢；否则先堵对方必胜点；否则在已有棋子附近随机取一个更“靠中心”的点
 // ====================== Stronger AI (Alpha-Beta + Pattern Eval) ======================
+
 // 可调参数：越大越强，但越慢。建议 3 起步
 const AI_DEPTH = 3;
 
@@ -217,20 +216,24 @@ const SCORE = {
   TWO: 220,
 };
 
+// ✅ 关键开关：是否把“活三(01110)”当作必须堵的威胁
+const MUST_BLOCK_OPEN_THREE = true;
+
 function aiPickMove(aiColor) {
   const opp = aiColor === BLACK ? WHITE : BLACK;
 
   const candidates = genCandidatesNeighborhood(2);
   if (candidates.length === 0) return { r: 9, c: 9 };
 
-  // 0) 必胜先手
+  // 0) 我方一手成五：直接下
   for (const p of candidates) {
     board[p.r][p.c] = aiColor;
     const win = checkWin(p.r, p.c, aiColor);
     board[p.r][p.c] = EMPTY;
     if (win) return p;
   }
-  // 1) 必防对手一手成五
+
+  // 1) 对手一手成五：必须堵
   for (const p of candidates) {
     board[p.r][p.c] = opp;
     const win = checkWin(p.r, p.c, opp);
@@ -238,7 +241,15 @@ function aiPickMove(aiColor) {
     if (win) return p;
   }
 
-  // 排序：让剪枝更有效
+  // 2) ✅ 必须防的威胁：活四/冲四/双活三/（可选：单活三）
+  const block = findUrgentBlock(aiColor);
+  if (block) return block;
+
+  // 3) 我方优先制造强威胁：活四/冲四/双活三
+  const attack = findUrgentAttack(aiColor);
+  if (attack) return attack;
+
+  // 4) alpha-beta 搜索（在战术过滤之后做）
   const ordered = candidates
     .map(p => ({ p, s: quickPointHeuristic(p.r, p.c, aiColor) }))
     .sort((a, b) => b.s - a.s)
@@ -415,6 +426,94 @@ function scoreLine(line) {
   ) return SCORE.TWO;
 
   return 0;
+}
+
+function findUrgentBlock(aiColor) {
+  const opp = aiColor === BLACK ? WHITE : BLACK;
+  const candidates = genCandidatesNeighborhood(2);
+
+  for (const p of candidates) {
+    // 模拟对手在 p 落子
+    board[p.r][p.c] = opp;
+
+    // 1) 对手直接赢（成五）
+    if (checkWin(p.r, p.c, opp)) {
+      board[p.r][p.c] = EMPTY;
+      return p;
+    }
+
+    // 2) 对手落子后形成的威胁类型
+    const t = threatLevelAt(p.r, p.c, opp);
+
+    board[p.r][p.c] = EMPTY;
+
+    // 必须挡：活四/冲四/双活三
+    if (t.openFour > 0 || t.four > 0 || t.doubleOpenThree) {
+      return p;
+    }
+
+    // ✅ 新增：单活三也当作必须挡（解决“三个子连线必须堵”）
+    if (MUST_BLOCK_OPEN_THREE && t.openThree > 0) {
+      return p;
+    }
+  }
+  return null;
+}
+
+function findUrgentAttack(aiColor) {
+  const candidates = genCandidatesNeighborhood(2);
+
+  for (const p of candidates) {
+    board[p.r][p.c] = aiColor;
+
+    if (checkWin(p.r, p.c, aiColor)) {
+      board[p.r][p.c] = EMPTY;
+      return p;
+    }
+
+    const t = threatLevelAt(p.r, p.c, aiColor);
+
+    board[p.r][p.c] = EMPTY;
+
+    // 优先级：活四 > 冲四 > 双活三
+    if (t.openFour > 0) return p;
+    if (t.four > 0) return p;
+    if (t.doubleOpenThree) return p;
+  }
+  return null;
+}
+
+// 识别某一步落子后，在四个方向上产生的威胁计数
+function threatLevelAt(r, c, color) {
+  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+  let openFour = 0;
+  let four = 0;
+  let openThree = 0;
+
+  for (const [dr, dc] of dirs) {
+    const line = getLine(r, c, dr, dc, color);
+
+    // 活四
+    if (line.includes("011110")) openFour++;
+
+    // 冲四/眠四（简化覆盖）
+    if (
+      line.includes("211110") || line.includes("011112") ||
+      line.includes("10111")  || line.includes("11101")  || line.includes("11011")
+    ) four++;
+
+    // 活三（01110 / 010110 / 011010）
+    if (
+      line.includes("01110") || line.includes("010110") || line.includes("011010")
+    ) openThree++;
+  }
+
+  return {
+    openFour,
+    four,
+    openThree,
+    doubleOpenThree: openThree >= 2
+  };
 }
 
 canvas.addEventListener("click", (e) => {
